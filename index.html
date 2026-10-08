@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Парящая свеча</title>
+<title>Парящие свечи</title>
 <style>
   html, body {
     margin: 0;
@@ -34,22 +34,57 @@
      Math.sin(t * 2.73 + s * 7.3 + 1.7) * 0.5 +
      Math.sin(t * 5.11 + s * 3.1 + 3.1) * 0.25) / 1.75;
 
-  let W = 0, H = 0, DPR = 1, S = 600, CH = 200, CW = 40;
+  let W = 0, H = 0, DPR = 1, t = 0;
 
-  // капли воска у основания (в долях от размера свечи)
-  const drips = [];
-  for (let i = 0; i < 5; i++) {
-    drips.push({
-      x: -0.38 + i * 0.19 + rand(-0.03, 0.03),
-      w: rand(0.10, 0.14),
-      l: rand(0.04, 0.10) + (i === 2 ? 0.07 : 0),
-      p: rand(0, 6.28)
-    });
+  // Размеры и скорости ФИКСИРОВАННЫЕ (в пикселях) и не зависят от размера файла.
+  // ch — высота свечи, v — макс. скорость (px/сек), agil — «поворотливость»
+  const CONFIG = [
+    { ch: 84, v: 20, agil: 0.55, off: 0 },
+    { ch: 96, v: 32, agil: 0.75, off: 37 },
+    { ch: 76, v: 46, agil: 0.95, off: 71 }
+  ];
+
+  function makeCandle(cfg, idx) {
+    const drips = [];
+    for (let i = 0; i < 5; i++) {
+      drips.push({
+        x: -0.38 + i * 0.19 + rand(-0.03, 0.03),
+        w: rand(0.10, 0.14),
+        l: rand(0.04, 0.10) + (i === 2 ? 0.07 : 0),
+        p: rand(0, 6.28)
+      });
+    }
+    return {
+      CH: cfg.ch, CW: cfg.ch * 0.2, maxV: cfg.v, agil: cfg.agil, off: cfg.off,
+      seed: idx * 10 + 1,
+      drips, parts: [], emitAcc: 0,
+      x: 0, y: 0, vx: 0, vy: 0, tx: 0, ty: 0, ang: 0, retargetAt: 0,
+      placed: false
+    };
   }
 
-  // состояние свечи
-  let x = 0, y = 0, vx = 0, vy = 0, tx = 0, ty = 0, ang = 0;
-  let retargetAt = 0, t = 0, started = false;
+  const candles = CONFIG.map(makeCandle);
+
+  function bounds(c) {
+    const mx = c.CW * 1.5 + 30;
+    const mt = c.CH * 0.9;
+    const mb = c.CH * 0.7;
+    return {
+      x0: Math.min(mx, W / 2), x1: Math.max(W - mx, W / 2),
+      y0: Math.min(mt, H / 2), y1: Math.max(H - mb, H / 2)
+    };
+  }
+
+  function pickTarget(c) {
+    const b = bounds(c);
+    const minDist = Math.min(W, H) * 0.25;
+    for (let i = 0; i < 12; i++) {
+      c.tx = rand(b.x0, b.x1);
+      c.ty = rand(b.y0, b.y1);
+      if (Math.hypot(c.tx - c.x, c.ty - c.y) > minDist) break;
+    }
+    c.retargetAt = t + rand(10, 18);
+  }
 
   function resize() {
     DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -58,49 +93,26 @@
     cv.width = Math.round(W * DPR);
     cv.height = Math.round(H * DPR);
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    S = Math.min(W, H);
-    CH = clamp(S * 0.3, 110, 300);
-    CW = CH * 0.2;
-    if (!started) {
-      x = rand(W * 0.3, W * 0.7);
-      y = rand(H * 0.35, H * 0.65);
-      started = true;
-      pickTarget();
-    } else {
-      pickTarget();
+    for (const c of candles) {
+      const b = bounds(c);
+      if (!c.placed) {
+        c.x = rand(b.x0, b.x1);
+        c.y = rand(b.y0, b.y1);
+        c.placed = true;
+      } else {
+        c.x = clamp(c.x, b.x0, b.x1);
+        c.y = clamp(c.y, b.y0, b.y1);
+      }
+      pickTarget(c);
     }
   }
 
-  function bounds() {
-    const mx = CW * 1.5 + 40;
-    const mt = CH * 0.9;
-    const mb = CH * 0.7;
-    return {
-      x0: Math.min(mx, W / 2), x1: Math.max(W - mx, W / 2),
-      y0: Math.min(mt, H / 2), y1: Math.max(H - mb, H / 2)
-    };
-  }
-
-  function pickTarget() {
-    const b = bounds();
-    for (let i = 0; i < 12; i++) {
-      tx = rand(b.x0, b.x1);
-      ty = rand(b.y0, b.y1);
-      if (Math.hypot(tx - x, ty - y) > S * 0.25) break;
-    }
-    retargetAt = t + rand(10, 16);
-  }
-
-  // частицы огня и искры
-  const parts = [];
-  let emitAcc = 0;
-
-  function spawnFlame(wx, wy, fw, fh, sc) {
-    parts.push({
+  function spawnFlame(c, fw, fh, sc) {
+    c.parts.push({
       spark: false,
-      x: wx + rand(-0.3, 0.3) * fw,
-      y: wy - fh * rand(0.05, 0.3),
-      vx: rand(-8, 8) * sc + vx * 0.1,
+      x: c.wx + rand(-0.3, 0.3) * fw,
+      y: c.wy - fh * rand(0.05, 0.3),
+      vx: rand(-8, 8) * sc + c.vx * 0.1,
       vy: -rand(35, 80) * sc,
       life: 0, max: rand(0.45, 0.9),
       r: fw * rand(0.55, 0.95),
@@ -108,27 +120,85 @@
     });
   }
 
-  function spawnSpark(wx, wy, fh, sc) {
-    parts.push({
+  function spawnSpark(c, fh, sc) {
+    c.parts.push({
       spark: true,
-      x: wx + rand(-3, 3) * sc,
-      y: wy - fh * rand(0.3, 0.7),
-      vx: rand(-25, 25) * sc + vx * 0.1,
+      x: c.wx + rand(-3, 3) * sc,
+      y: c.wy - fh * rand(0.3, 0.7),
+      vx: rand(-25, 25) * sc + c.vx * 0.1,
       vy: -rand(30, 70) * sc,
       life: 0, max: rand(1.2, 2.2),
-      r: rand(0.9, 1.6) * Math.max(sc, 0.7),
+      r: rand(0.9, 1.5),
       seed: rand(0, 50)
     });
   }
 
-  function bodyPath() {
-    const w = CW / 2, top = -CH / 2, bot = CH / 2 - CH * 0.03;
+  function update(c, dt) {
+    const tt = t + c.off;
+    const maxV = c.maxV, CH = c.CH, CW = c.CW;
+
+    const dx = c.tx - c.x, dy = c.ty - c.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d < 40 || t > c.retargetAt) pickTarget(c);
+    const sp = Math.min(maxV, d * 0.35);
+    const dvx = dx / d * sp + n(tt * 0.35, c.seed + 1) * maxV * 0.6;
+    const dvy = dy / d * sp + n(tt * 0.31, c.seed + 2) * maxV * 0.6;
+    const k = 1 - Math.exp(-dt * c.agil);
+    c.vx += (dvx - c.vx) * k;
+    c.vy += (dvy - c.vy) * k;
+    c.x += c.vx * dt;
+    c.y += c.vy * dt;
+
+    // мягкие границы
+    const b = bounds(c);
+    if (c.x < b.x0) c.vx += (b.x0 - c.x) * dt * 0.8;
+    if (c.x > b.x1) c.vx -= (c.x - b.x1) * dt * 0.8;
+    if (c.y < b.y0) c.vy += (b.y0 - c.y) * dt * 0.8;
+    if (c.y > b.y1) c.vy -= (c.y - b.y1) * dt * 0.8;
+
+    const targetA = clamp(c.vx / maxV * 0.12, -0.2, 0.2) + n(tt * 0.4, c.seed + 4) * 0.05;
+    c.ang += (targetA - c.ang) * (1 - Math.exp(-dt * 1.5));
+
+    c.X = c.x;
+    c.Y = c.y + Math.sin(tt * 1.1) * CH * 0.03 + n(tt * 0.5, c.seed + 3) * CH * 0.02;
+
+    c.wl = CH * 0.05;
+    const wd = CH / 2 + c.wl;
+    c.wx = c.X + wd * Math.sin(c.ang);
+    c.wy = c.Y - wd * Math.cos(c.ang);
+
+    const sc = CH / 200;
+    const flick = 1 + 0.10 * n(tt * 7, c.seed + 5) + 0.05 * n(tt * 13, c.seed + 6);
+    c.fh = CH * 0.3 * flick;
+    c.fw = c.fh * 0.3 * (1 + 0.06 * n(tt * 9, c.seed + 7));
+    c.lean = c.fh * clamp(-c.vx / maxV * 0.15 + n(tt * 3, c.seed + 8) * 0.12, -0.35, 0.35);
+    c.glowK = 0.85 + 0.15 * n(tt * 8, c.seed + 9);
+    c.sc = sc;
+
+    // частицы
+    c.emitAcc += dt * 90;
+    while (c.emitAcc >= 1) { c.emitAcc -= 1; spawnFlame(c, c.fw, c.fh, sc); }
+    if (Math.random() < dt * 1.2) spawnSpark(c, c.fh, sc);
+
+    for (let i = c.parts.length - 1; i >= 0; i--) {
+      const p = c.parts[i];
+      p.life += dt;
+      if (p.life >= p.max) { c.parts.splice(i, 1); continue; }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx += n(p.y * 0.02 + t * 2, p.seed) * (p.spark ? 40 : 30) * sc * dt;
+      p.vy *= 1 - dt * 0.3;
+    }
+  }
+
+  function bodyPath(c) {
+    const w = c.CW / 2, top = -c.CH / 2, bot = c.CH / 2 - c.CH * 0.03;
     ctx.beginPath();
     ctx.moveTo(-w, top);
     ctx.lineTo(-w * 0.98, bot);
-    for (const d of drips) {
-      const cx = d.x * CW, dw = d.w * CW / 2;
-      const dl = d.l * CH * (1 + 0.05 * Math.sin(t * 0.8 + d.p));
+    for (const d of c.drips) {
+      const cx = d.x * c.CW, dw = d.w * c.CW / 2;
+      const dl = d.l * c.CH * (1 + 0.05 * Math.sin(t * 0.8 + d.p));
       ctx.lineTo(cx - dw, bot);
       ctx.bezierCurveTo(cx - dw, bot + dl * 0.95, cx + dw, bot + dl * 0.95, cx + dw, bot);
     }
@@ -145,89 +215,25 @@
     ctx.closePath();
   }
 
-  let last = performance.now();
-
-  function frame(now) {
-    const dt = Math.min((now - last) / 1000, 0.05);
-    last = now;
-    t += dt;
-
-    // ---------- движение ----------
-    const maxV = S * 0.075;
-    const dx = tx - x, dy = ty - y;
-    const d = Math.hypot(dx, dy) || 1;
-    if (d < S * 0.06 || t > retargetAt) pickTarget();
-    const sp = Math.min(maxV, d * 0.35);
-    let dvx = dx / d * sp + n(t * 0.35, 1) * maxV * 0.6;
-    let dvy = dy / d * sp + n(t * 0.31, 2) * maxV * 0.6;
-    const k = 1 - Math.exp(-dt * 0.7);
-    vx += (dvx - vx) * k;
-    vy += (dvy - vy) * k;
-    x += vx * dt;
-    y += vy * dt;
-
-    // мягкие границы
-    const b = bounds();
-    if (x < b.x0) vx += (b.x0 - x) * dt * 0.8;
-    if (x > b.x1) vx -= (x - b.x1) * dt * 0.8;
-    if (y < b.y0) vy += (b.y0 - y) * dt * 0.8;
-    if (y > b.y1) vy -= (y - b.y1) * dt * 0.8;
-
-    const targetA = clamp(vx / maxV * 0.12, -0.2, 0.2) + n(t * 0.4, 4) * 0.05;
-    ang += (targetA - ang) * (1 - Math.exp(-dt * 1.5));
-
-    const X = x;
-    const Y = y + Math.sin(t * 1.1) * CH * 0.03 + n(t * 0.5, 3) * CH * 0.02;
-
-    // позиция кончика фитиля в мире
-    const wl = CH * 0.05;
-    const wd = CH / 2 + wl;
-    const wx = X + wd * Math.sin(ang);
-    const wy = Y - wd * Math.cos(ang);
-
-    // параметры пламени
-    const sc = CH / 200;
-    const flick = 1 + 0.10 * n(t * 7, 5) + 0.05 * n(t * 13, 6);
-    const fh = CH * 0.3 * flick;
-    const fw = fh * 0.3 * (1 + 0.06 * n(t * 9, 7));
-    const lean = fh * clamp(-vx / maxV * 0.15 + n(t * 3, 8) * 0.12, -0.35, 0.35);
-    const glowK = 0.85 + 0.15 * n(t * 8, 9);
-
-    // ---------- частицы ----------
-    emitAcc += dt * 110;
-    while (emitAcc >= 1) { emitAcc -= 1; spawnFlame(wx + lean * 0.2, wy, fw, fh, sc); }
-    if (Math.random() < dt * 1.4) spawnSpark(wx, wy, fh, sc);
-
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const p = parts[i];
-      p.life += dt;
-      if (p.life >= p.max) { parts.splice(i, 1); continue; }
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.vx += n(p.y * 0.02 + t * 2, p.seed) * (p.spark ? 40 : 30) * sc * dt;
-      p.vy *= 1 - dt * 0.3;
-    }
-
-    // ---------- отрисовка ----------
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    ctx.clearRect(0, 0, W, H);
-
-    // мягкое свечение вокруг пламени
+  function drawGlow(c) {
     ctx.globalCompositeOperation = 'source-over';
-    let g = ctx.createRadialGradient(wx, wy - fh * 0.4, 0, wx, wy - fh * 0.4, CH * 1.6);
-    g.addColorStop(0, `rgba(255,170,60,${0.26 * glowK})`);
-    g.addColorStop(0.35, `rgba(255,140,40,${0.10 * glowK})`);
+    const cx = c.wx, cy = c.wy - c.fh * 0.4, R = c.CH * 1.6;
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+    g.addColorStop(0, `rgba(255,170,60,${0.26 * c.glowK})`);
+    g.addColorStop(0.35, `rgba(255,140,40,${0.10 * c.glowK})`);
     g.addColorStop(1, 'rgba(255,120,30,0)');
     ctx.fillStyle = g;
-    ctx.fillRect(wx - CH * 1.7, wy - CH * 1.7, CH * 3.4, CH * 3.4);
+    ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+  }
 
-    // свеча
+  function drawBody(c) {
+    const CH = c.CH, CW = c.CW, wl = c.wl;
     ctx.save();
-    ctx.translate(X, Y);
-    ctx.rotate(ang);
+    ctx.translate(c.X, c.Y);
+    ctx.rotate(c.ang);
 
-    bodyPath();
-    g = ctx.createLinearGradient(-CW / 2, 0, CW / 2, 0);
+    bodyPath(c);
+    let g = ctx.createLinearGradient(-CW / 2, 0, CW / 2, 0);
     g.addColorStop(0, '#e4d4b2');
     g.addColorStop(0.25, '#f8efd8');
     g.addColorStop(0.55, '#fffaf0');
@@ -237,22 +243,22 @@
 
     // тёплый свет от пламени на воске
     ctx.save();
-    bodyPath();
+    bodyPath(c);
     ctx.clip();
     g = ctx.createRadialGradient(0, -CH / 2, 0, 0, -CH / 2, CH * 0.9);
-    g.addColorStop(0, `rgba(255,170,70,${0.55 * glowK})`);
-    g.addColorStop(0.5, `rgba(255,190,100,${0.18 * glowK})`);
+    g.addColorStop(0, `rgba(255,170,70,${0.55 * c.glowK})`);
+    g.addColorStop(0.5, `rgba(255,190,100,${0.18 * c.glowK})`);
     g.addColorStop(1, 'rgba(255,190,100,0)');
     ctx.fillStyle = g;
     ctx.fillRect(-CW, -CH / 2 - CW, CW * 2, CH * 1.3);
     ctx.restore();
 
-    bodyPath();
+    bodyPath(c);
     ctx.strokeStyle = 'rgba(130,100,60,0.45)';
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 1;
     ctx.stroke();
 
-    // верх свечи: лужица расплавленного воска
+    // лужица расплавленного воска
     const ry = CW * 0.14;
     ctx.beginPath();
     ctx.ellipse(0, -CH / 2, CW / 2, ry, 0, 0, Math.PI * 2);
@@ -262,7 +268,6 @@
     g.addColorStop(1, '#f1dcb0');
     ctx.fillStyle = g;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(130,100,60,0.45)';
     ctx.stroke();
 
     ctx.beginPath();
@@ -275,44 +280,45 @@
     ctx.moveTo(0, -CH / 2);
     ctx.quadraticCurveTo(CW * 0.04, -CH / 2 - wl * 0.6, 0, -CH / 2 - wl);
     ctx.strokeStyle = '#2b1d12';
-    ctx.lineWidth = Math.max(1.5, CW * 0.06);
+    ctx.lineWidth = Math.max(1.2, CW * 0.06);
     ctx.lineCap = 'round';
     ctx.stroke();
 
     ctx.restore();
+  }
 
-    // частицы огня (аддитивно)
+  function drawFire(c) {
+    const { wx, wy, fw, fh, lean } = c;
+
+    // частицы (аддитивно)
     ctx.globalCompositeOperation = 'lighter';
-    for (const p of parts) {
+    for (const p of c.parts) {
       const a = p.life / p.max;
-      let r, c, alpha;
       if (p.spark) {
-        r = p.r * (1 - a * 0.5);
-        alpha = (1 - a) * (0.6 + 0.4 * Math.sin(p.life * 30 + p.seed));
-        c = '255,200,110';
+        const r = p.r * (1 - a * 0.5);
+        const alpha = clamp((1 - a) * (0.6 + 0.4 * Math.sin(p.life * 30 + p.seed)), 0, 1);
         const gs = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 3);
-        gs.addColorStop(0, `rgba(255,240,200,${clamp(alpha, 0, 1)})`);
-        gs.addColorStop(0.4, `rgba(${c},${clamp(alpha * 0.5, 0, 1)})`);
-        gs.addColorStop(1, `rgba(${c},0)`);
+        gs.addColorStop(0, `rgba(255,240,200,${alpha})`);
+        gs.addColorStop(0.4, `rgba(255,200,110,${alpha * 0.5})`);
+        gs.addColorStop(1, 'rgba(255,200,110,0)');
         ctx.fillStyle = gs;
         ctx.fillRect(p.x - r * 3, p.y - r * 3, r * 6, r * 6);
       } else {
-        r = p.r * (1 - a * 0.8);
-        alpha = Math.pow(1 - a, 1.5) * 0.5;
-        c = a < 0.3 ? '255,210,90' : a < 0.65 ? '255,140,30' : '255,70,10';
+        const r = p.r * (1 - a * 0.8);
+        const alpha = Math.pow(1 - a, 1.5) * 0.5;
+        const col = a < 0.3 ? '255,210,90' : a < 0.65 ? '255,140,30' : '255,70,10';
         const gp = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
-        gp.addColorStop(0, `rgba(${c},${alpha})`);
-        gp.addColorStop(1, `rgba(${c},0)`);
+        gp.addColorStop(0, `rgba(${col},${alpha})`);
+        gp.addColorStop(1, `rgba(${col},0)`);
         ctx.fillStyle = gp;
         ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
       }
     }
     ctx.globalCompositeOperation = 'source-over';
 
-    // основное пламя
-    // внешний слой
+    // внешний слой пламени
     flamePath(wx, wy, fw, fh, lean);
-    g = ctx.createLinearGradient(0, wy, 0, wy - fh);
+    let g = ctx.createLinearGradient(0, wy, 0, wy - fh);
     g.addColorStop(0, 'rgba(255,200,80,0.95)');
     g.addColorStop(0.6, 'rgba(255,120,20,0.85)');
     g.addColorStop(1, 'rgba(255,60,0,0)');
@@ -341,6 +347,23 @@
     ctx.ellipse(wx, wy - fh * 0.06, fw * 0.32, fh * 0.12, 0, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(90,140,255,0.5)';
     ctx.fill();
+  }
+
+  let last = performance.now();
+
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    t += dt;
+
+    for (const c of candles) update(c, dt);
+
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    for (const c of candles) drawGlow(c);
+    for (const c of candles) drawBody(c);
+    for (const c of candles) drawFire(c);
 
     requestAnimationFrame(frame);
   }
